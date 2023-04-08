@@ -2,50 +2,34 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"math/rand"
 	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-type model int
-
-type tickMsg time.Time
-
 func main() {
-	p := tea.NewProgram(model(5), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		log.Fatal(err)
+	fmt.Println("coolmaths!")
+
+	seed := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(seed)
+
+	var answer int
+	var count int
+
+	for i := 0; i < 10; i++ {
+		n1 := r.Intn(10)
+		n2 := r.Intn(10)
+
+		fmt.Printf("What is %d x %d? ", n1, n2)
+		fmt.Scanln(&answer)
+
+		if answer == n1*n2 {
+			fmt.Println("Correct!")
+			count += 1
+		} else {
+			fmt.Println("Incorrect!")
+		}
 	}
 
-}
-func (m model) Init() tea.Cmd {
-	return tea.Batch(tick(), tea.EnterAltScreen)
-}
+	fmt.Printf("You got %d out of 10 correct!\n\nYour score is %f%%\n", count, float64(count)/10*100)
 
-func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := message.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "esc", "ctrl+c":
-			return m, tea.Quit
-		}
-	case tickMsg:
-		m--
-		if m <= 0 {
-			return m, tea.Quit
-		}
-		return m, tick()
-	}
-	return m, nil
-}
-
-func (m model) View() string {
-	return fmt.Sprintf("\n\n Hi. This program will exit in %d seconds...", m)
-}
-
-func tick() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
 }
