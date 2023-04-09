@@ -2,34 +2,149 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
-	"time"
+	"log"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+type Styles struct {
+	BorderColor lipgloss.Color
+	InputField  lipgloss.Style
+}
+
+func DefaultStyles() *Styles {
+	s := new(Styles)
+	s.BorderColor = lipgloss.Color("36")
+	s.InputField = lipgloss.NewStyle().BorderForeground(s.BorderColor).BorderStyle(lipgloss.NormalBorder()).Padding(1).Width(80)
+	return s
+}
+
+type Main struct {
+	styles    *Styles
+	index     int
+	questions []Question
+	width     int
+	height    int
+	done      bool
+}
+
+type Question struct {
+	question string
+	answer   string
+	input    Input
+}
+
+func newQuestion(question string) Question {
+	return Question{question: question}
+}
+
+func newShortQuestion(q string) Question {
+	question := newQuestion(q)
+	model := NewShortAnswerField()
+	question.input = model
+	return question
+}
+func newLongQuestion(q string) Question {
+	question := newQuestion(q)
+	model := NewLongAnswerField()
+	question.input = model
+	return question
+}
+
+func New(questions []Question) *Main {
+	styles := DefaultStyles()
+	return &Main{questions: questions, styles: styles}
+}
+
+func (m Main) Init() tea.Cmd {
+	return m.questions[m.index].input.Blink
+}
+func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	current := &m.questions[m.index]
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "enter":
+			if m.index == len(m.questions)-1 {
+				m.done = true
+			}
+			current.answer = current.input.Value()
+			log.Printf("Question: %s, Answer: %s", current.question, current.answer)
+			m.Next()
+			return m, current.input.Blur
+		}
+	}
+	current.input, cmd = current.input.Update(msg)
+	return m, cmd
+}
+func (m Main) View() string {
+	current := m.questions[m.index]
+	if m.done {
+		var output string
+		for _, q := range m.questions {
+			output += fmt.Sprintf("%s: %s\n", q.question, q.answer)
+		}
+		return output
+
+	}
+
+	if m.width == 0 {
+		return "loading..."
+	}
+
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		lipgloss.JoinVertical(
+			lipgloss.Left,
+			current.question,
+			m.styles.InputField.Render(current.input.View())))
+}
+
+func (m *Main) Next() {
+	if m.index < len(m.questions)-1 {
+		m.index++
+	} else {
+		m.index = 0
+	}
+}
 
 func main() {
 	fmt.Println("coolmaths!")
 
-	seed := rand.NewSource(time.Now().UnixNano())
-	r := rand.New(seed)
+	questions := []Question{
+		newShortQuestion("What is your name?"),
+		newShortQuestion("what is your favorite editor?"),
+		newLongQuestion("what is your favorite quote?")}
 
-	var answer int
-	var count int
+	m := New(questions)
 
-	for i := 0; i < 10; i++ {
-		n1 := r.Intn(10)
-		n2 := r.Intn(10)
+	f, err := tea.LogToFile("debug.log", "debug")
 
-		fmt.Printf("What is %d x %d? ", n1, n2)
-		fmt.Scanln(&answer)
-
-		if answer == n1*n2 {
-			fmt.Println("Correct!")
-			count += 1
-		} else {
-			fmt.Println("Incorrect!")
-		}
+	if err != nil {
+		log.Fatalf("err: %v", err)
 	}
 
-	fmt.Printf("You got %d out of 10 correct!\n\nYour score is %f%%\n", count, float64(count)/10*100)
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(f)
 
+	p := tea.NewProgram(m, tea.WithAltScreen())
+
+	if _, err := p.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
