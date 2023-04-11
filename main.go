@@ -27,7 +27,7 @@ func DefaultStyles() *Styles {
 type Main struct {
 	styles    *Styles
 	index     int
-	questions [3]Question
+	questions [10]Question
 	width     int
 	height    int
 	done      bool
@@ -58,7 +58,7 @@ func newLongQuestion(q string) Question {
 	return question
 }
 
-func New(questions [3]Question) *Main {
+func New(questions [10]Question) *Main {
 	styles := DefaultStyles()
 	return &Main{questions: questions, styles: styles}
 }
@@ -103,8 +103,16 @@ func (m Main) View() string {
 	if m.done {
 		var output string
 		for _, q := range m.questions {
-			output += fmt.Sprintf("%s: %s\n", q.question, q.answer)
+			ans, _ := strconv.Atoi(q.answer)
+			var response string
+			if ans == q.expected {
+				response = "You got it right!"
+			} else {
+				response = "You were wrong!"
+			}
+			output += fmt.Sprintf("%s: Your answer %s. Expected %d. %s \n", q.question, q.answer, q.expected, response)
 		}
+		output += fmt.Sprintf("\n\nPress q to exit!")
 		return output
 
 	}
@@ -140,9 +148,9 @@ func main() {
 
 	var r1, r2 int
 
-	var questions [3]Question
+	var questions [10]Question
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 10; i++ {
 		r1 = r.Intn(10)
 		r2 = r.Intn(10)
 		questions[i] = newShortQuestion(fmt.Sprintf("What is %d x %d ? ", r1, r2), r1*r2)
