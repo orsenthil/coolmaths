@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
+	"strconv"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -24,7 +27,7 @@ func DefaultStyles() *Styles {
 type Main struct {
 	styles    *Styles
 	index     int
-	questions []Question
+	questions [3]Question
 	width     int
 	height    int
 	done      bool
@@ -32,6 +35,7 @@ type Main struct {
 
 type Question struct {
 	question string
+	expected int
 	answer   string
 	input    Input
 }
@@ -40,10 +44,11 @@ func newQuestion(question string) Question {
 	return Question{question: question}
 }
 
-func newShortQuestion(q string) Question {
+func newShortQuestion(q string, expected int) Question {
 	question := newQuestion(q)
 	model := NewShortAnswerField()
 	question.input = model
+	question.expected = expected
 	return question
 }
 func newLongQuestion(q string) Question {
@@ -53,7 +58,7 @@ func newLongQuestion(q string) Question {
 	return question
 }
 
-func New(questions []Question) *Main {
+func New(questions [3]Question) *Main {
 	styles := DefaultStyles()
 	return &Main{questions: questions, styles: styles}
 }
@@ -77,7 +82,15 @@ func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.done = true
 			}
 			current.answer = current.input.Value()
-			log.Printf("Question: %s, Answer: %s", current.question, current.answer)
+			ans, _ := strconv.Atoi(current.answer)
+			var response string
+			if ans == current.expected {
+				response = "You got it right!"
+			} else {
+				response = "You were wrong!"
+			}
+
+			log.Printf("Question: %s, Your Answer: %s. Correct Answer: %d. %s ", current.question, current.answer, current.expected, response)
 			m.Next()
 			return m, current.input.Blur
 		}
@@ -122,10 +135,18 @@ func (m *Main) Next() {
 func main() {
 	fmt.Println("coolmaths!")
 
-	questions := []Question{
-		newShortQuestion("What is your name?"),
-		newShortQuestion("what is your favorite editor?"),
-		newLongQuestion("what is your favorite quote?")}
+	seed := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(seed)
+
+	var r1, r2 int
+
+	var questions [3]Question
+
+	for i := 0; i < 3; i++ {
+		r1 = r.Intn(10)
+		r2 = r.Intn(10)
+		questions[i] = newShortQuestion(fmt.Sprintf("What is %d x %d ? ", r1, r2), r1*r2)
+	}
 
 	m := New(questions)
 
