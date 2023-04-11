@@ -30,3 +30,7 @@ func start() {
 
 	fmt.Printf("You got %d out of 10 correct!\n\nYour score is %f%%\n", count, float64(count)/10*100)
 }
+
+func main() {
+	start()
+}

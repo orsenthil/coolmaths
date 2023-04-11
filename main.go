@@ -102,16 +102,22 @@ func (m Main) View() string {
 	current := m.questions[m.index]
 	if m.done {
 		var output string
+		count := 0
 		for _, q := range m.questions {
 			ans, _ := strconv.Atoi(q.answer)
 			var response string
 			if ans == q.expected {
 				response = "You got it right!"
+				count += 1
 			} else {
 				response = "You were wrong!"
 			}
-			output += fmt.Sprintf("%s: Your answer %s. Expected %d. %s \n", q.question, q.answer, q.expected, response)
+			output += fmt.Sprintf("%s: Your answer %4s. Expected %4d. %s \n", q.question, q.answer, q.expected, response)
 		}
+
+		percent := (float32(count) / 10.0) * 100.0
+
+		output += fmt.Sprintf("\n\nYou got %2d out 10 correct. You scored %0.2f %%", count, float32(percent))
 		output += fmt.Sprintf("\n\nPress q to exit!")
 		return output
 
