@@ -27,7 +27,7 @@ func DefaultStyles() *Styles {
 type Main struct {
 	styles    *Styles
 	index     int
-	questions [10]Question
+	questions [30]Question
 	width     int
 	height    int
 	done      bool
@@ -58,7 +58,7 @@ func newLongQuestion(q string) Question {
 	return question
 }
 
-func New(questions [10]Question) *Main {
+func New(questions [30]Question) *Main {
 	styles := DefaultStyles()
 	return &Main{questions: questions, styles: styles}
 }
@@ -154,9 +154,9 @@ func main() {
 
 	var r1, r2 int
 
-	var questions [10]Question
+	var questions [30]Question
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 30; i++ {
 		r1 = r.Intn(10)
 		r2 = r.Intn(10)
 		questions[i] = newShortQuestion(fmt.Sprintf("What is %d x %d ? ", r1, r2), r1*r2)
