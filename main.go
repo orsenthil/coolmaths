@@ -115,9 +115,9 @@ func (m Main) View() string {
 			output += fmt.Sprintf("%s: Your answer %4s. Expected %4d. %s \n", q.question, q.answer, q.expected, response)
 		}
 
-		percent := (float32(count) / 10.0) * 100.0
+		percent := (float32(count) / 30.0) * 100.0
 
-		output += fmt.Sprintf("\n\nYou got %2d out 10 correct. You scored %0.2f %%", count, float32(percent))
+		output += fmt.Sprintf("\n\nYou got %2d out 30 correct. You scored %0.2f %%", count, float32(percent))
 		output += fmt.Sprintf("\n\nPress q to exit!")
 		return output
 
