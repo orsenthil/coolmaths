@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"os"
 	"strconv"
 	"time"
 
@@ -20,14 +19,16 @@ type Styles struct {
 func DefaultStyles() *Styles {
 	s := new(Styles)
 	s.BorderColor = lipgloss.Color("36")
-	s.InputField = lipgloss.NewStyle().BorderForeground(s.BorderColor).BorderStyle(lipgloss.NormalBorder()).Padding(1).Width(80)
+	s.InputField = lipgloss.NewStyle().BorderForeground(s.BorderColor).BorderStyle(lipgloss.RoundedBorder()).Padding(1).Width(80)
 	return s
 }
 
 type Main struct {
 	styles    *Styles
+	title1    string
+	title2    string
 	index     int
-	questions [30]Question
+	questions [3]Question
 	width     int
 	height    int
 	done      bool
@@ -52,9 +53,11 @@ func newShortQuestion(q string, expected int) Question {
 	return question
 }
 
-func New(questions [30]Question) *Main {
+func InitializeMainScreen(questions [3]Question) *Main {
 	styles := DefaultStyles()
-	return &Main{questions: questions, styles: styles}
+	title1 := "C O O L M A T H S"
+	title2 := "Learn, Play and Enjoy Maths"
+	return &Main{styles: styles, title1: title1, title2: title2, questions: questions}
 }
 
 func (m Main) Init() tea.Cmd {
@@ -76,15 +79,6 @@ func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.done = true
 			}
 			current.answer = current.input.Value()
-			ans, _ := strconv.Atoi(current.answer)
-			var response string
-			if ans == current.expected {
-				response = "You got it right!"
-			} else {
-				response = "You were wrong!"
-			}
-
-			log.Printf("Question: %s, Your Answer: %s. Correct Answer: %d. %s ", current.question, current.answer, current.expected, response)
 			m.Next()
 			return m, current.input.Blur
 		}
@@ -121,15 +115,36 @@ func (m Main) View() string {
 		return "loading..."
 	}
 
+	var style1 = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#7D56F4")).
+		Background(lipgloss.Color("#8cf5d2")).
+		Padding(2).
+		MarginBottom(2).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#7D56F4")).
+		BorderBackground(lipgloss.Color("#8cf5d2"))
+
+	var style2 = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("428")).
+		Padding(2).
+		BorderForeground(lipgloss.Color("428"))
+
+	title := lipgloss.JoinVertical(lipgloss.Center, style1.Render(m.title1), style2.Render(m.title2))
+
 	return lipgloss.Place(
 		m.width,
 		m.height,
 		lipgloss.Center,
-		lipgloss.Center,
+		lipgloss.Top,
 		lipgloss.JoinVertical(
-			lipgloss.Left,
-			current.question,
-			m.styles.InputField.Render(current.input.View())))
+			lipgloss.Center,
+			title,
+			lipgloss.JoinVertical(
+				lipgloss.Left,
+				current.question,
+				m.styles.InputField.Render(current.input.View()))))
 }
 
 func (m *Main) Next() {
@@ -141,35 +156,20 @@ func (m *Main) Next() {
 }
 
 func main() {
-	fmt.Println("coolmaths!")
+	var r1, r2 int
 
 	seed := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(seed)
 
-	var r1, r2 int
+	var questions [3]Question
 
-	var questions [30]Question
-
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 3; i++ {
 		r1 = r.Intn(10)
 		r2 = r.Intn(10)
 		questions[i] = newShortQuestion(fmt.Sprintf("What is %d x %d ? ", r1, r2), r1*r2)
 	}
 
-	m := New(questions)
-
-	f, err := tea.LogToFile("debug.log", "debug")
-
-	if err != nil {
-		log.Fatalf("err: %v", err)
-	}
-
-	defer func(f *os.File) {
-		err := f.Close()
-		if err != nil {
-			log.Fatal(err)
-		}
-	}(f)
+	m := InitializeMainScreen(questions)
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
