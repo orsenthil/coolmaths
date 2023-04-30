@@ -116,6 +116,7 @@ func (m Main) View() string {
 			{Title: "Feedback", Width: 20},
 		}
 		var rows []table.Row
+		count := 0
 
 		for qn, q := range m.questions {
 			ans, _ := strconv.Atoi(q.answer)
@@ -123,6 +124,7 @@ func (m Main) View() string {
 
 			if ans == q.expected {
 				response = "You got it!"
+				count += 1
 			} else {
 				response = "Doh!"
 			}
@@ -151,13 +153,19 @@ func (m Main) View() string {
 			Bold(false)
 
 		t.SetStyles(s)
+		var final string
+
+		percent := (float32(count) / 3.0) * 100.0
+
+		final += fmt.Sprintf("\n\nYou got %2d out 30 correct. You scored %0.2f %%", count, float32(percent))
+		final += fmt.Sprintf("\n\nPress q to exit!")
 
 		return lipgloss.Place(
 			m.width,
 			m.height,
 			lipgloss.Center,
 			lipgloss.Top,
-			tableStyle.Render(t.View()))
+			tableStyle.Render(t.View())+final)
 
 		// return tableStyle.Render(t.View()) + "\n"
 
