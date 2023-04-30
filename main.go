@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/glamour"
 	"log"
 	"math/rand"
 	"os"
@@ -26,8 +24,6 @@ func DefaultStyles() *Styles {
 	return s
 }
 
-var helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render
-
 type Main struct {
 	styles    *Styles
 	index     int
@@ -35,7 +31,6 @@ type Main struct {
 	width     int
 	height    int
 	done      bool
-	viewport  viewport.Model
 }
 
 type Question struct {
@@ -58,35 +53,8 @@ func newShortQuestion(q string, expected int) Question {
 }
 
 func New(questions [30]Question) *Main {
-	const width = 78
-
-	vp := viewport.New(width, 20)
-
-	vp.Style = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
-		PaddingRight(2)
-
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		return nil
-	}
-
-	str, err := renderer.Render("something")
-
-	if err != nil {
-		return nil
-	}
-
-	vp.SetContent(str)
-
 	styles := DefaultStyles()
-
-	return &Main{questions: questions, styles: styles, viewport: vp}
-
+	return &Main{questions: questions, styles: styles}
 }
 
 func (m Main) Init() tea.Cmd {
@@ -125,7 +93,6 @@ func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 func (m Main) View() string {
-	m.viewport.View()
 	current := m.questions[m.index]
 	if m.done {
 		var output string
