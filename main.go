@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/charmbracelet/bubbles/table"
 	"log"
 	"math/rand"
 	"strconv"
@@ -16,6 +17,10 @@ type Styles struct {
 	InputField  lipgloss.Style
 }
 
+var tableStyle = lipgloss.NewStyle().
+	BorderStyle(lipgloss.NormalBorder()).
+	BorderForeground(lipgloss.Color("240"))
+
 func DefaultStyles() *Styles {
 	s := new(Styles)
 	s.BorderColor = lipgloss.Color("36")
@@ -24,14 +29,15 @@ func DefaultStyles() *Styles {
 }
 
 type Main struct {
-	styles    *Styles
-	title1    string
-	title2    string
-	index     int
-	questions [3]Question
-	width     int
-	height    int
-	done      bool
+	styles         *Styles
+	title1         string
+	title2         string
+	index          int
+	questions      [3]Question
+	width          int
+	height         int
+	done           bool
+	answerFeedback string
 }
 
 type Question struct {
@@ -87,8 +93,71 @@ func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 func (m Main) View() string {
+	var rightAnswerStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#000000")).
+		Background(lipgloss.Color("#b1ff9c"))
+
+	var wrongAnswerStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#000000")).
+		Background(lipgloss.Color("#fa4d4d"))
+
 	current := m.questions[m.index]
 	if m.done {
+		columns := []table.Column{
+			{Title: "Question", Width: 4},
+			{Title: "Problem", Width: 10},
+			{Title: "Your Answer", Width: 10},
+			{Title: "Correct Answer", Width: 10},
+			{Title: "Feedback", Width: 10},
+		}
+		var rows []table.Row
+
+		for qn, q := range m.questions {
+			ans, _ := strconv.Atoi(q.answer)
+			var response string
+			if ans == q.expected {
+				response = rightAnswerStyle.Render("You got it!")
+			} else {
+				response = wrongAnswerStyle.Render("Doh!")
+			}
+			rows = append(rows, table.Row{
+				fmt.Sprintf("%d", qn),
+				fmt.Sprintf("%s", q.question),
+				fmt.Sprintf("%s", q.answer),
+				fmt.Sprintf("%d", q.expected),
+				fmt.Sprintf("%s", response),
+			})
+
+		}
+
+		t := table.New(
+			table.WithColumns(columns),
+			table.WithRows(rows),
+			table.WithFocused(true),
+			table.WithHeight(7),
+		)
+
+		s := table.DefaultStyles()
+		s.Header = s.Header.
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("240")).
+			BorderBottom(true).
+			Bold(false)
+
+		t.SetStyles(s)
+
+		return lipgloss.Place(
+			m.width,
+			m.height,
+			lipgloss.Center,
+			lipgloss.Top,
+			tableStyle.Render(t.View()))
+
+		// return tableStyle.Render(t.View()) + "\n"
+
+		/**
 		var output string
 		count := 0
 		for _, q := range m.questions {
@@ -108,6 +177,7 @@ func (m Main) View() string {
 		output += fmt.Sprintf("\n\nYou got %2d out 30 correct. You scored %0.2f %%", count, float32(percent))
 		output += fmt.Sprintf("\n\nPress q to exit!")
 		return output
+		*/
 
 	}
 
