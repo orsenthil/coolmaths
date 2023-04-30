@@ -59,7 +59,7 @@ type example struct {
 func newExample() (*example, error) {
 	const width = 78
 
-	vp := viewport.New(width, 40)
+	vp := viewport.New(width, 50)
 	vp.Style = lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("62")).
@@ -120,7 +120,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := tea.NewProgram(model).Run(); err != nil {
+	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Println("Bummer, there's been an error:", err)
 		os.Exit(1)
 	}
