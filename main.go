@@ -5,6 +5,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"log"
 	"math/rand"
+	"strconv"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -103,36 +104,36 @@ func (m Main) View() string {
 		Background(lipgloss.Color("#fa4d4d"))
 
 	wrongAnswerStyle.Render("something")
+	rightAnswerStyle.Render("something")
 
 	current := m.questions[m.index]
 	if m.done {
 		columns := []table.Column{
 			{Title: "Question", Width: 10},
 			{Title: "Problem", Width: 30},
-			{Title: "Your Answer", Width: 20},
-			{Title: "Correct Answer", Width: 20},
-			{Title: "Feedback", Width: 10},
+			{Title: "Your Answer", Width: 15},
+			{Title: "Correct Answer", Width: 15},
+			{Title: "Feedback", Width: 20},
 		}
 		var rows []table.Row
 
 		for qn, q := range m.questions {
-			// ans, _ := strconv.Atoi(q.answer)
-			/**
+			ans, _ := strconv.Atoi(q.answer)
 			var response string
+
 			if ans == q.expected {
-				response = rightAnswerStyle.Render("You got it!")
+				response = "You got it!"
 			} else {
-				response = wrongAnswerStyle.Render("Doh!")
+				response = "Doh!"
 			}
-			*/
+
 			rows = append(rows, table.Row{
 				fmt.Sprintf("%d", qn+1),
 				fmt.Sprintf("%s", q.question),
 				fmt.Sprintf("%s", q.answer),
 				fmt.Sprintf("%d", q.expected),
-				rightAnswerStyle.Render("You got it!"),
+				response,
 			})
-
 		}
 
 		t := table.New(
