@@ -33,7 +33,7 @@ type Main struct {
 	title1         string
 	title2         string
 	index          int
-	questions      [3]Question
+	questions      [30]Question
 	width          int
 	height         int
 	done           bool
@@ -59,7 +59,7 @@ func newShortQuestion(q string, expected int) Question {
 	return question
 }
 
-func InitializeMainScreen(questions [3]Question) *Main {
+func InitializeMainScreen(questions [30]Question) *Main {
 	styles := DefaultStyles()
 	title1 := "C O O L M A T H S"
 	title2 := "Learn, Play and Enjoy Maths"
@@ -141,8 +141,8 @@ func (m Main) View() string {
 		t := table.New(
 			table.WithColumns(columns),
 			table.WithRows(rows),
-			table.WithFocused(true),
-			table.WithHeight(7),
+			table.WithFocused(false),
+			table.WithHeight(30),
 		)
 
 		s := table.DefaultStyles()
@@ -166,30 +166,6 @@ func (m Main) View() string {
 			lipgloss.Center,
 			lipgloss.Top,
 			tableStyle.Render(t.View())+final)
-
-		// return tableStyle.Render(t.View()) + "\n"
-
-		/**
-		var output string
-		count := 0
-		for _, q := range m.questions {
-			ans, _ := strconv.Atoi(q.answer)
-			var response string
-			if ans == q.expected {
-				response = "You got it right!"
-				count += 1
-			} else {
-				response = "You were wrong!"
-			}
-			output += fmt.Sprintf("%s: Your answer %4s. Expected %4d. %s \n", q.question, q.answer, q.expected, response)
-		}
-
-		percent := (float32(count) / 30.0) * 100.0
-
-		output += fmt.Sprintf("\n\nYou got %2d out 30 correct. You scored %0.2f %%", count, float32(percent))
-		output += fmt.Sprintf("\n\nPress q to exit!")
-		return output
-		*/
 
 	}
 
@@ -243,9 +219,9 @@ func main() {
 	seed := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(seed)
 
-	var questions [3]Question
+	var questions [30]Question
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 30; i++ {
 		r1 = r.Intn(10)
 		r2 = r.Intn(10)
 		questions[i] = newShortQuestion(fmt.Sprintf("What is %d x %d ? ", r1, r2), r1*r2)
