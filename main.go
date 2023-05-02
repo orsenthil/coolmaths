@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,15 +30,14 @@ func DefaultStyles() *Styles {
 }
 
 type Main struct {
-	styles         *Styles
-	title1         string
-	title2         string
-	index          int
-	questions      [30]Question
-	width          int
-	height         int
-	done           bool
-	answerFeedback string
+	styles    *Styles
+	title1    string
+	title2    string
+	index     int
+	questions [30]Question
+	width     int
+	height    int
+	done      bool
 }
 
 type Question struct {
@@ -80,6 +80,12 @@ func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "r":
+			m.questions = createQuestions()
+			m.index = 0
+			m.done = false
+			current = &m.questions[m.index]
+			return m, current.input.Blur
 		case "enter":
 			if m.index == len(m.questions)-1 {
 				m.done = true
@@ -103,9 +109,6 @@ func (m Main) View() string {
 		Foreground(lipgloss.Color("#000000")).
 		Background(lipgloss.Color("#fa4d4d"))
 
-	wrongAnswerStyle.Render("something")
-	rightAnswerStyle.Render("something")
-
 	current := m.questions[m.index]
 	if m.done {
 		columns := []table.Column{
@@ -117,16 +120,22 @@ func (m Main) View() string {
 		}
 		var rows []table.Row
 		count := 0
+		var ans int
+		var response string
 
 		for qn, q := range m.questions {
-			ans, _ := strconv.Atoi(q.answer)
-			var response string
-
-			if ans == q.expected {
-				response = "You got it!"
-				count += 1
-			} else {
+			if len(strings.TrimSpace(q.answer)) == 0 {
 				response = "Doh!"
+			} else {
+
+				ans, _ = strconv.Atoi(q.answer)
+				if ans == q.expected {
+					response = "You got it!"
+					count += 1
+				} else {
+					response = "Doh!"
+				}
+
 			}
 
 			rows = append(rows, table.Row{
@@ -155,10 +164,16 @@ func (m Main) View() string {
 		t.SetStyles(s)
 		var final string
 
-		percent := (float32(count) / 3.0) * 100.0
+		percent := (float32(count) / 30.0) * 100.0
+
+		if percent == 100.0 {
+			final += "\n\n" + rightAnswerStyle.Render("You Won!")
+		} else {
+			final += "\n\n" + wrongAnswerStyle.Render("Oh Oh. You will more need practice")
+		}
 
 		final += fmt.Sprintf("\n\nYou got %2d out 30 correct. You scored %0.2f %%", count, float32(percent))
-		final += fmt.Sprintf("\n\nPress q to exit!")
+		final += fmt.Sprintf("\n\nPress q to exit or Press r to play again.")
 
 		return lipgloss.Place(
 			m.width,
@@ -213,7 +228,7 @@ func (m *Main) Next() {
 	}
 }
 
-func main() {
+func createQuestions() [30]Question {
 	var r1, r2 int
 
 	seed := rand.NewSource(time.Now().UnixNano())
@@ -226,7 +241,11 @@ func main() {
 		r2 = r.Intn(10)
 		questions[i] = newShortQuestion(fmt.Sprintf("What is %d x %d ? ", r1, r2), r1*r2)
 	}
+	return questions
+}
 
+func main() {
+	questions := createQuestions()
 	m := InitializeMainScreen(questions)
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
