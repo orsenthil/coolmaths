@@ -29,7 +29,7 @@ func DefaultStyles() *Styles {
 	return s
 }
 
-type Main struct {
+type MainMenu struct {
 	styles    *Styles
 	title1    string
 	title2    string
@@ -59,17 +59,17 @@ func newShortQuestion(q string, expected int) Question {
 	return question
 }
 
-func InitializeMainScreen(questions [30]Question) *Main {
+func InitializeMainScreen(questions [30]Question) *MainMenu {
 	styles := DefaultStyles()
 	title1 := "C O O L M A T H S"
 	title2 := "Learn, Play and Enjoy Maths"
-	return &Main{styles: styles, title1: title1, title2: title2, questions: questions}
+	return &MainMenu{styles: styles, title1: title1, title2: title2, questions: questions}
 }
 
-func (m Main) Init() tea.Cmd {
+func (m MainMenu) Init() tea.Cmd {
 	return m.questions[m.index].input.Blink
 }
-func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	current := &m.questions[m.index]
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
@@ -90,7 +90,7 @@ func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.index == len(m.questions)-1 {
 				m.done = true
 			}
-			current.answer = current.input.Value()
+			current.answer = strings.TrimSpace(current.input.Value())
 			m.Next()
 			return m, current.input.Blur
 		}
@@ -98,7 +98,7 @@ func (m Main) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	current.input, cmd = current.input.Update(msg)
 	return m, cmd
 }
-func (m Main) View() string {
+func (m MainMenu) View() string {
 	var rightAnswerStyle = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#000000")).
@@ -220,7 +220,7 @@ func (m Main) View() string {
 				m.styles.InputField.Render(current.input.View()))))
 }
 
-func (m *Main) Next() {
+func (m *MainMenu) Next() {
 	if m.index < len(m.questions)-1 {
 		m.index++
 	} else {
