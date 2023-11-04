@@ -9,17 +9,24 @@ from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.highlighter import Highlighter
 from rich.segment import Segment
 from rich.text import Text
+from typing_extensions import Literal
 
 from .. import events
 from .._segment_tools import line_crop
 from ..binding import Binding, BindingType
 from ..events import Blur, Focus, Mount
-from ..geometry import Size
+from ..geometry import Offset, Size
 from ..message import Message
 from ..reactive import reactive
 from ..suggester import Suggester, SuggestionReady
+from ..timer import Timer
 from ..validation import ValidationResult, Validator
 from ..widget import Widget
+
+InputValidationOn = Literal["blur", "changed", "submitted"]
+"""Possible messages that trigger input validation."""
+_POSSIBLE_VALIDATE_ON_VALUES = {"blur", "changed", "submitted"}
+"""Set literal with the legal values for the type `InputValidationOn`."""
 
 
 class _InputRenderable:
@@ -151,7 +158,7 @@ class Input(Widget, can_focus=True):
     }
     """
 
-    cursor_blink = reactive(True)
+    cursor_blink = reactive(True, init=False)
     value = reactive("", layout=True, init=False)
     input_scroll_offset = reactive(0)
     cursor_position = reactive(0)
@@ -221,6 +228,7 @@ class Input(Widget, can_focus=True):
         *,
         suggester: Suggester | None = None,
         validators: Validator | Iterable[Validator] | None = None,
+        validate_on: Iterable[InputValidationOn] | None = None,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
@@ -236,6 +244,9 @@ class Input(Widget, can_focus=True):
             suggester: [`Suggester`][textual.suggester.Suggester] associated with this
                 input instance.
             validators: An iterable of validators that the Input value will be checked against.
+            validate_on: Zero or more of the values "blur", "changed", and "submitted",
+                which determine when to do input validation. The default is to do
+                validation for all messages.
             name: Optional name for the input widget.
             id: Optional ID for the widget.
             classes: Optional initial classes for the widget.
@@ -244,6 +255,10 @@ class Input(Widget, can_focus=True):
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
         if value is not None:
             self.value = value
+
+        self._blink_timer: Timer | None = None
+        """Timer controlling the blinking of the cursor, instantiated in `on_mount`."""
+
         self.placeholder = placeholder
         self.highlighter = highlighter
         self.password = password
@@ -254,7 +269,25 @@ class Input(Widget, can_focus=True):
         elif validators is None:
             self.validators = []
         else:
-            self.validators = list(validators) or []
+            self.validators = list(validators)
+
+        self.validate_on = (
+            set(validate_on) & _POSSIBLE_VALIDATE_ON_VALUES
+            if validate_on is not None
+            else _POSSIBLE_VALIDATE_ON_VALUES
+        )
+        """Set with event names to do input validation on.
+
+        Validation can only be performed on blur, on input changes and on input submission.
+
+        Example:
+            This creates an `Input` widget that only gets validated when the value
+            is submitted explicitly:
+
+            ```py
+            input = Input(validate_on=["submitted"])
+            ```
+        """
 
     def _position_to_cell(self, position: int) -> int:
         """Convert an index within the value to cell position."""
@@ -299,6 +332,23 @@ class Input(Widget, can_focus=True):
         else:
             self.view_position = self.view_position
 
+        self.app.cursor_position = self.cursor_screen_offset
+
+    def _watch_cursor_blink(self, blink: bool) -> None:
+        """Ensure we handle updating the cursor blink at runtime."""
+        if self._blink_timer is not None:
+            if blink:
+                self._blink_timer.resume()
+            else:
+                self._cursor_visible = True
+                self._blink_timer.pause()
+
+    @property
+    def cursor_screen_offset(self) -> Offset:
+        """The offset of the cursor of this input in screen-space. (x, y)/(column, row)"""
+        x, y, _width, _height = self.content_region
+        return Offset(x + self._cursor_offset - self.view_position, y)
+
     async def _watch_value(self, value: str) -> None:
         self._suggestion = ""
         if self.suggester and value:
@@ -306,8 +356,9 @@ class Input(Widget, can_focus=True):
         if self.styles.auto_dimensions:
             self.refresh(layout=True)
 
-        validation_result = self.validate(value)
-
+        validation_result = (
+            self.validate(value) if "changed" in self.validate_on else None
+        )
         self.post_message(self.Changed(self, value, validation_result))
 
     def validate(self, value: str) -> ValidationResult | None:
@@ -381,24 +432,27 @@ class Input(Widget, can_focus=True):
         self._cursor_visible = not self._cursor_visible
 
     def _on_mount(self, _: Mount) -> None:
-        self.blink_timer = self.set_interval(
+        self._blink_timer = self.set_interval(
             0.5,
             self._toggle_cursor,
             pause=not (self.cursor_blink and self.has_focus),
         )
 
     def _on_blur(self, _: Blur) -> None:
-        self.blink_timer.pause()
+        self._blink_timer.pause()
+        if "blur" in self.validate_on:
+            self.validate(self.value)
 
     def _on_focus(self, _: Focus) -> None:
         self.cursor_position = len(self.value)
         if self.cursor_blink:
-            self.blink_timer.resume()
+            self._blink_timer.resume()
+        self.app.cursor_position = self.cursor_screen_offset
 
     async def _on_key(self, event: events.Key) -> None:
         self._cursor_visible = True
         if self.cursor_blink:
-            self.blink_timer.reset()
+            self._blink_timer.reset()
 
         if event.is_printable:
             event.stop()
@@ -421,10 +475,11 @@ class Input(Widget, can_focus=True):
         cell_offset = 0
         _cell_size = get_character_cell_size
         for index, char in enumerate(self.value):
-            if cell_offset >= click_x:
+            cell_width = _cell_size(char)
+            if cell_offset <= click_x < (cell_offset + cell_width):
                 self.cursor_position = index
                 break
-            cell_offset += _cell_size(char)
+            cell_offset += cell_width
         else:
             self.cursor_position = len(self.value)
 
@@ -448,6 +503,10 @@ class Input(Widget, can_focus=True):
             after = value[self.cursor_position :]
             self.value = f"{before}{text}{after}"
             self.cursor_position += len(text)
+
+    def clear(self) -> None:
+        """Clear the input."""
+        self.value = ""
 
     def action_cursor_left(self) -> None:
         """Move the cursor one position to the left."""
@@ -576,7 +635,9 @@ class Input(Widget, can_focus=True):
     async def action_submit(self) -> None:
         """Handle a submit action.
 
-        Normally triggered by the user pressing Enter. This will also run any validators.
+        Normally triggered by the user pressing Enter. This may also run any validators.
         """
-        validation_result = self.validate(self.value)
+        validation_result = (
+            self.validate(self.value) if "submitted" in self.validate_on else None
+        )
         self.post_message(self.Submitted(self, self.value, validation_result))

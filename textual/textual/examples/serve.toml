@@ -1,0 +1,5 @@
+[app.Calculator]
+command = "python calculator.py"
+
+[app.Dictionary]
+command = "python dictionary.py"

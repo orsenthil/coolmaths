@@ -53,6 +53,7 @@ import rich
 import rich.repr
 from rich import terminal_theme
 from rich.console import Console, RenderableType
+from rich.control import Control
 from rich.protocol import is_renderable
 from rich.segment import Segment, Segments
 from rich.traceback import Traceback
@@ -68,11 +69,13 @@ from ._context import active_app, active_message_pump
 from ._context import message_hook as message_hook_context_var
 from ._event_broker import NoHandler, extract_handler_actions
 from ._path import CSSPathType, _css_path_type_as_list, _make_path_object_relative
+from ._system_commands import SystemCommands
 from ._wait import wait_for_idle
 from ._worker_manager import WorkerManager
 from .actions import ActionParseResult, SkipAction
 from .await_remove import AwaitRemove
 from .binding import Binding, BindingType, _Bindings
+from .command import CommandPalette, Provider
 from .css.query import NoMatches
 from .css.stylesheet import Stylesheet
 from .design import ColorSystem
@@ -90,16 +93,17 @@ from .keys import (
     _get_unicode_name_from_key,
 )
 from .messages import CallbackType
-from .notifications import Notification, Notifications, SeverityLevel
+from .notifications import Notification, Notifications, Notify, SeverityLevel
 from .reactive import Reactive
 from .renderables.blank import Blank
 from .screen import Screen, ScreenResultCallbackType, ScreenResultType
 from .widget import AwaitMount, Widget
 from .widgets._toast import ToastRack
+from .worker import NoActiveWorker, get_current_worker
 
 if TYPE_CHECKING:
     from textual_dev.client import DevtoolsClient
-    from typing_extensions import Coroutine, TypeAlias
+    from typing_extensions import Coroutine, Literal, TypeAlias
 
     from ._types import MessageTarget
 
@@ -238,6 +242,10 @@ class _PrintCapture:
         # TODO: should this be configurable?
         return True
 
+    def fileno(self) -> int:
+        """Return invalid fileno."""
+        return -1
+
 
 @rich.repr.auto
 class App(Generic[ReturnType], DOMNode):
@@ -248,17 +256,14 @@ class App(Generic[ReturnType], DOMNode):
     and therefore takes priority in the event of a specificity clash."""
 
     # Default (the lowest priority) CSS
-    DEFAULT_CSS: ClassVar[
-        str
-    ] = """
+    DEFAULT_CSS: ClassVar[str]
+    DEFAULT_CSS = """
     App {
         background: $background;
         color: $text;
     }
-
     *:disabled:can-focus {
         opacity: 0.7;
-
     }
     """
 
@@ -308,17 +313,29 @@ class App(Generic[ReturnType], DOMNode):
     TITLE: str | None = None
     """A class variable to set the *default* title for the application.
 
-    To update the title while the app is running, you can set the [title][textual.app.App.title] attribute
+    To update the title while the app is running, you can set the [title][textual.app.App.title] attribute.
+    See also [the `Screen.TITLE` attribute][textual.screen.Screen.TITLE].
     """
 
     SUB_TITLE: str | None = None
     """A class variable to set the default sub-title for the application.
 
     To update the sub-title while the app is running, you can set the [sub_title][textual.app.App.sub_title] attribute.
+    See also [the `Screen.SUB_TITLE` attribute][textual.screen.Screen.SUB_TITLE].
+    """
+
+    ENABLE_COMMAND_PALETTE: ClassVar[bool] = True
+    """Should the [command palette][textual.command.CommandPalette] be enabled for the application?"""
+
+    COMMANDS: ClassVar[set[type[Provider]]] = {SystemCommands}
+    """Command providers used by the [command palette](/guide/command_palette).
+
+    Should be a set of [command.Provider][textual.command.Provider] classes.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("ctrl+c", "quit", "Quit", show=False, priority=True)
+        Binding("ctrl+c", "quit", "Quit", show=False, priority=True),
+        Binding("ctrl+backslash", "command_palette", show=False, priority=True),
     ]
 
     title: Reactive[str] = Reactive("", compute=False)
@@ -355,6 +372,7 @@ class App(Generic[ReturnType], DOMNode):
         Raises:
             CssPathError: When the supplied CSS path(s) are an unexpected type.
         """
+        self._start_time = perf_counter()
         super().__init__()
         self.features: frozenset[FeatureFlag] = parse_features(os.getenv("TEXTUAL", ""))
 
@@ -400,6 +418,12 @@ class App(Generic[ReturnType], DOMNode):
         self._animate = self._animator.bind(self)
         self.mouse_position = Offset(0, 0)
 
+        self.cursor_position = Offset(0, 0)
+        """The position of the terminal cursor in screen-space.
+
+        This can be set by widgets and is useful for controlling the
+        positioning of OS IME and emoji popup menus."""
+
         self._exception: Exception | None = None
         """The unhandled exception which is leading to the app shutting down,
         or None if the app is still running with no unhandled exceptions."""
@@ -426,10 +450,18 @@ class App(Generic[ReturnType], DOMNode):
         an empty string if it doesn't.
 
         Sub-titles are typically used to show the high-level state of the app, such as the current mode, or path to
-        the file being worker on.
+        the file being worked on.
 
         Assign a new value to this attribute to change the sub-title.
         The new value is always converted to string.
+        """
+
+        self.use_command_palette: bool = self.ENABLE_COMMAND_PALETTE
+        """A flag to say if the application should use the command palette.
+
+        If set to `False` any call to
+        [`action_command_palette`][textual.app.App.action_command_palette]
+        will be ignored.
         """
 
         self._logger = Logger(self._log)
@@ -475,11 +507,14 @@ class App(Generic[ReturnType], DOMNode):
                 # Dev dependencies not installed
                 pass
             else:
-                self.devtools = DevtoolsClient()
+                self.devtools = DevtoolsClient(constants.DEVTOOLS_HOST)
                 self._devtools_redirector = StdoutRedirector(self.devtools)
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._return_value: ReturnType | None = None
+        """Internal attribute used to set the return value for the app."""
+        self._return_code: int | None = None
+        """Internal attribute used to set the return code for the app."""
         self._exit = False
         self._disable_tooltips = False
         self._disable_notifications = False
@@ -498,8 +533,15 @@ class App(Generic[ReturnType], DOMNode):
         self._capture_print: WeakKeyDictionary[
             MessageTarget, tuple[bool, bool]
         ] = WeakKeyDictionary()
+        """Registry of the MessageTargets which are capturing output at any given time."""
         self._capture_stdout = _PrintCapture(self, stderr=False)
+        """File-like object capturing data written to stdout."""
         self._capture_stderr = _PrintCapture(self, stderr=True)
+        """File-like object capturing data written to stderr."""
+        self._original_stdout = sys.__stdout__
+        """The original stdout stream (before redirection etc)."""
+        self._original_stderr = sys.__stderr__
+        """The original stderr stream (before redirection etc)."""
 
         self.set_class(self.dark, "-dark-mode")
         self.set_class(not self.dark, "-light-mode")
@@ -528,6 +570,23 @@ class App(Generic[ReturnType], DOMNode):
         The return value is set when calling [exit][textual.app.App.exit].
         """
         return self._return_value
+
+    @property
+    def return_code(self) -> int | None:
+        """The return code with which the app exited.
+
+        Non-zero codes indicate errors.
+        A value of 1 means the app exited with a fatal error.
+        If the app wasn't exited yet, this will be `None`.
+
+        Example:
+            The return code can be used to exit the process via `sys.exit`.
+            ```py
+            my_app.run()
+            sys.exit(my_app.return_code)
+            ```
+        """
+        return self._return_code
 
     @property
     def children(self) -> Sequence["Widget"]:
@@ -648,17 +707,27 @@ class App(Generic[ReturnType], DOMNode):
         """
         return self._screen_stacks[self._current_mode]
 
+    @property
+    def current_mode(self) -> str:
+        """The name of the currently active mode."""
+        return self._current_mode
+
     def exit(
-        self, result: ReturnType | None = None, message: RenderableType | None = None
+        self,
+        result: ReturnType | None = None,
+        return_code: int = 0,
+        message: RenderableType | None = None,
     ) -> None:
         """Exit the app, and return the supplied result.
 
         Args:
             result: Return value.
+            return_code: The return code. Use non-zero values for error codes.
             message: Optional message to display on exit.
         """
         self._exit = True
         self._return_value = result
+        self._return_code = return_code
         self.post_message(messages.ExitApp())
         if message:
             self._exit_renderables.append(message)
@@ -1093,14 +1162,27 @@ class App(Generic[ReturnType], DOMNode):
             self._devtools_redirector.flush()
 
     def _print(self, text: str, stderr: bool = False) -> None:
-        """Called with capture print.
+        """Called with captured print.
+
+        Dispatches printed content to appropriate destinations: devtools,
+        widgets currently capturing output, stdout/stderr.
 
         Args:
             text: Text that has been printed.
             stderr: True if the print was to stderr, or False for stdout.
         """
         if self._devtools_redirector is not None:
-            self._devtools_redirector.write(text)
+            current_frame = inspect.currentframe()
+            self._devtools_redirector.write(
+                text, current_frame.f_back if current_frame is not None else None
+            )
+
+        # If we're in headless mode, we want printed text to still reach stdout/stderr.
+        if self.is_headless:
+            target_stream = self._original_stderr if stderr else self._original_stdout
+            target_stream.write(text)
+
+        # Send Print events to all widgets that are currently capturing output.
         for target, (_stdout, _stderr) in self._capture_print.items():
             if (_stderr and stderr) or (_stdout and not stderr):
                 target.post_message(events.Print(text, stderr=stderr))
@@ -1110,7 +1192,7 @@ class App(Generic[ReturnType], DOMNode):
     ) -> None:
         """Capture content that is printed (or written to stdout / stderr).
 
-        If printing is captured, the `target` will be send an [events.Print][textual.events.Print] message.
+        If printing is captured, the `target` will be sent an [events.Print][textual.events.Print] message.
 
         Args:
             target: The widget where print content will be sent.
@@ -1139,10 +1221,14 @@ class App(Generic[ReturnType], DOMNode):
         tooltips: bool = False,
         notifications: bool = False,
         message_hook: Callable[[Message], None] | None = None,
-    ) -> AsyncGenerator[Pilot, None]:
-        """An asynchronous context manager for testing app.
+    ) -> AsyncGenerator[Pilot[ReturnType], None]:
+        """An asynchronous context manager for testing apps.
 
-        Use this to run your app in "headless" (no output) mode and driver the app via a [Pilot][textual.pilot.Pilot] object.
+        !!! tip
+
+            See the guide for [testing](/guide/testing) Textual apps.
+
+        Use this to run your app in "headless" mode (no output) and drive the app via a [Pilot][textual.pilot.Pilot] object.
 
         Example:
 
@@ -1158,7 +1244,8 @@ class App(Generic[ReturnType], DOMNode):
                 or None to auto-detect.
             tooltips: Enable tooltips when testing.
             notifications: Enable notifications when testing.
-            message_hook: An optional callback that will called with every message going through the app.
+            message_hook: An optional callback that will be called each time any message arrives at any
+                message pump in the app.
         """
         from .pilot import Pilot
 
@@ -1171,7 +1258,7 @@ class App(Generic[ReturnType], DOMNode):
             """Called when app is ready to process events."""
             app_ready_event.set()
 
-        async def run_app(app) -> None:
+        async def run_app(app: App) -> None:
             if message_hook is not None:
                 message_hook_context_var.set(message_hook)
             app._loop = asyncio.get_running_loop()
@@ -1262,6 +1349,7 @@ class App(Generic[ReturnType], DOMNode):
         try:
             app._loop = asyncio.get_running_loop()
             app._thread_id = threading.get_ident()
+
             await app._process_messages(
                 ready_callback=None if auto_pilot is None else app_ready,
                 headless=headless,
@@ -1509,27 +1597,39 @@ class App(Generic[ReturnType], DOMNode):
         """
         return self.mount(*widgets, before=before, after=after)
 
-    def _init_mode(self, mode: str) -> None:
-        """Do internal initialisation of a new screen stack mode."""
+    def _init_mode(self, mode: str) -> AwaitMount:
+        """Do internal initialisation of a new screen stack mode.
+
+        Args:
+            mode: Name of the mode.
+
+        Returns:
+            An optionally awaitable object which can be awaited until the screen
+            associated with the mode has been mounted.
+        """
 
         stack = self._screen_stacks.get(mode, [])
-        if not stack:
+        if stack:
+            await_mount = AwaitMount(stack[0], [])
+        else:
             _screen = self.MODES[mode]
-            if callable(_screen):
-                screen, _ = self._get_screen(_screen())
-            else:
-                screen, _ = self._get_screen(self.MODES[mode])
+            new_screen: Screen | str = _screen() if callable(_screen) else _screen
+            screen, await_mount = self._get_screen(new_screen)
             stack.append(screen)
-
             self._load_screen_css(screen)
 
         self._screen_stacks[mode] = stack
+        return await_mount
 
-    def switch_mode(self, mode: str) -> None:
+    def switch_mode(self, mode: str) -> AwaitMount:
         """Switch to a given mode.
 
         Args:
             mode: The mode to switch to.
+
+        Returns:
+            An optionally awaitable object which waits for the screen associated
+                with the mode to be mounted.
 
         Raises:
             UnknownModeError: If trying to switch to an unknown mode.
@@ -1541,12 +1641,18 @@ class App(Generic[ReturnType], DOMNode):
         self.screen.refresh()
 
         if mode not in self._screen_stacks:
-            self._init_mode(mode)
+            await_mount = self._init_mode(mode)
+        else:
+            await_mount = AwaitMount(self.screen, [])
+
         self._current_mode = mode
         self.screen._screen_resized(self.size)
         self.screen.post_message(events.ScreenResume())
+
         self.log.system(f"{self._current_mode!r} is the current mode")
         self.log.system(f"{self.screen} is active")
+
+        return await_mount
 
     def add_mode(
         self, mode: str, base_screen: str | Screen | Callable[[], Screen]
@@ -1665,19 +1771,22 @@ class App(Generic[ReturnType], DOMNode):
 
         update = False
         for path in screen.css_path:
-            if not self.stylesheet.has_source(path):
+            if not self.stylesheet.has_source(str(path), ""):
                 self.stylesheet.read(path)
                 update = True
         if screen.CSS:
             try:
-                screen_css_path = (
-                    f"{inspect.getfile(screen.__class__)}:{screen.__class__.__name__}"
-                )
+                screen_path = inspect.getfile(screen.__class__)
             except (TypeError, OSError):
-                screen_css_path = f"{screen.__class__.__name__}"
-            if not self.stylesheet.has_source(screen_css_path):
+                screen_path = ""
+            screen_class_var = f"{screen.__class__.__name__}.CSS"
+            read_from = (screen_path, screen_class_var)
+            if not self.stylesheet.has_source(screen_path, screen_class_var):
                 self.stylesheet.add_source(
-                    screen.CSS, path=screen_css_path, is_default_css=False
+                    screen.CSS,
+                    read_from=read_from,
+                    is_default_css=False,
+                    scope=screen._css_type_name if screen.SCOPED_CSS else "",
                 )
                 update = True
         if update:
@@ -1704,37 +1813,83 @@ class App(Generic[ReturnType], DOMNode):
             self.log.system(f"{screen} REMOVED")
         return screen
 
+    @overload
     def push_screen(
         self,
         screen: Screen[ScreenResultType] | str,
         callback: ScreenResultCallbackType[ScreenResultType] | None = None,
+        wait_for_dismiss: Literal[False] = False,
     ) -> AwaitMount:
+        ...
+
+    @overload
+    def push_screen(
+        self,
+        screen: Screen[ScreenResultType] | str,
+        callback: ScreenResultCallbackType[ScreenResultType] | None = None,
+        wait_for_dismiss: Literal[True] = True,
+    ) -> asyncio.Future[ScreenResultType]:
+        ...
+
+    def push_screen(
+        self,
+        screen: Screen[ScreenResultType] | str,
+        callback: ScreenResultCallbackType[ScreenResultType] | None = None,
+        wait_for_dismiss: bool = False,
+    ) -> AwaitMount | asyncio.Future[ScreenResultType]:
         """Push a new [screen](/guide/screens) on the screen stack, making it the current screen.
 
         Args:
             screen: A Screen instance or the name of an installed screen.
             callback: An optional callback function that will be called if the screen is [dismissed][textual.screen.Screen.dismiss] with a result.
+            wait_for_dismiss: If `True`, awaiting this method will return the dismiss value from the screen. When set to `False`, awaiting
+                this method will wait for the screen to be mounted. Note that `wait_for_dismiss` should only be set to `True` when running in a worker.
+
+        Raises:
+            NoActiveWorker: If using `wait_for_dismiss` outside of a worker.
 
         Returns:
-            An optional awaitable that awaits the mounting of the screen and its children.
+            An optional awaitable that awaits the mounting of the screen and its children, or an asyncio Future
+                to await the result of the screen.
         """
         if not isinstance(screen, (Screen, str)):
             raise TypeError(
                 f"push_screen requires a Screen instance or str; not {screen!r}"
             )
 
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Mainly for testing, when push_screen isn't called in an async context
+            future: asyncio.Future[ScreenResultType] = asyncio.Future()
+        else:
+            future = loop.create_future()
+
         if self._screen_stack:
             self.screen.post_message(events.ScreenSuspend())
             self.screen.refresh()
         next_screen, await_mount = self._get_screen(screen)
-        next_screen._push_result_callback(
-            self.screen if self._screen_stack else None, callback
-        )
+        try:
+            message_pump = active_message_pump.get()
+        except LookupError:
+            message_pump = self.app
+
+        next_screen._push_result_callback(message_pump, callback, future)
         self._load_screen_css(next_screen)
         self._screen_stack.append(next_screen)
+        self.stylesheet.update(next_screen)
         next_screen.post_message(events.ScreenResume())
         self.log.system(f"{self.screen} is current (PUSHED)")
-        return await_mount
+        if wait_for_dismiss:
+            try:
+                get_current_worker()
+            except NoActiveWorker:
+                raise NoActiveWorker(
+                    "push_screen must be run from a worker when `wait_for_dismiss` is True"
+                ) from None
+            return future
+        else:
+            return await_mount
 
     def switch_screen(self, screen: Screen | str) -> AwaitMount:
         """Switch to another [screen](/guide/screens) by replacing the top of the screen stack with a new screen.
@@ -1834,7 +1989,6 @@ class App(Generic[ReturnType], DOMNode):
             )
         previous_screen = self._replace_screen(screen_stack.pop())
         previous_screen._pop_result_callback()
-        self.screen._screen_resized(self.size)
         self.screen.post_message(events.ScreenResume())
         self.log.system(f"{self.screen} is active")
         return previous_screen
@@ -1893,7 +2047,6 @@ class App(Generic[ReturnType], DOMNode):
         Args:
             *renderables: Text or Rich renderable(s) to display on exit.
         """
-
         assert all(
             is_renderable(renderable) for renderable in renderables
         ), "Can only call panic with strings or Rich renderables"
@@ -1905,6 +2058,7 @@ class App(Generic[ReturnType], DOMNode):
 
         pre_rendered = [Segments(render(renderable)) for renderable in renderables]
         self._exit_renderables.extend(pre_rendered)
+
         self._close_messages_no_wait()
 
     def _handle_exception(self, error: Exception) -> None:
@@ -1915,6 +2069,7 @@ class App(Generic[ReturnType], DOMNode):
         Args:
             error: An exception instance.
         """
+        self._return_code = 1
         # If we're running via pilot and this is the first exception encountered,
         # take note of it so that we can re-raise for test frameworks later.
         if self.is_headless and self._exception is None:
@@ -1953,7 +2108,7 @@ class App(Generic[ReturnType], DOMNode):
             self.error_console.print(self._exit_renderables[0])
             if error_count > 1:
                 self.error_console.print(
-                    f"\n[b]NOTE:[/b] 1 of {error_count} errors shown. Run with [b]--dev[/] to see all errors.",
+                    f"\n[b]NOTE:[/b] 1 of {error_count} errors shown. Run with [b]textual run --dev[/] to see all errors.",
                     markup=True,
                 )
 
@@ -1990,19 +2145,22 @@ class App(Generic[ReturnType], DOMNode):
         try:
             if self.css_path:
                 self.stylesheet.read_all(self.css_path)
-            for path, css, tie_breaker in self._get_default_css():
+            for read_from, css, tie_breaker, scope in self._get_default_css():
                 self.stylesheet.add_source(
-                    css, path=path, is_default_css=True, tie_breaker=tie_breaker
+                    css,
+                    read_from=read_from,
+                    is_default_css=True,
+                    tie_breaker=tie_breaker,
+                    scope=scope,
                 )
             if self.CSS:
                 try:
-                    app_css_path = (
-                        f"{inspect.getfile(self.__class__)}:{self.__class__.__name__}"
-                    )
+                    app_path = inspect.getfile(self.__class__)
                 except (TypeError, OSError):
-                    app_css_path = f"{self.__class__.__name__}"
+                    app_path = ""
+                read_from = (app_path, f"{self.__class__.__name__}.CSS")
                 self.stylesheet.add_source(
-                    self.CSS, path=app_css_path, is_default_css=False
+                    self.CSS, read_from=read_from, is_default_css=False
                 )
         except Exception as error:
             self._handle_exception(error)
@@ -2026,6 +2184,7 @@ class App(Generic[ReturnType], DOMNode):
                 try:
                     try:
                         await self._dispatch_message(events.Compose())
+                        default_screen = self.screen
                         await self._dispatch_message(events.Mount())
                         self.check_idle()
                     finally:
@@ -2034,7 +2193,8 @@ class App(Generic[ReturnType], DOMNode):
                     Reactive._initialize_object(self)
 
                     self.stylesheet.update(self)
-                    self.refresh()
+                    if self.screen is not default_screen:
+                        self.stylesheet.update(default_screen)
 
                     await self.animator.start()
 
@@ -2088,14 +2248,18 @@ class App(Generic[ReturnType], DOMNode):
         except Exception as error:
             self._handle_exception(error)
 
-    async def _pre_process(self) -> None:
-        pass
+    async def _pre_process(self) -> bool:
+        """Special case for the app, which doesn't need the functionality in MessagePump."""
+        return True
 
     async def _ready(self) -> None:
         """Called immediately prior to processing messages.
 
         May be used as a hook for any operations that should run first.
         """
+
+        ready_time = (perf_counter() - self._start_time) * 1000
+        self.log.info(f"ready in {ready_time:0.0f} milliseconds")
 
         async def take_screenshot() -> None:
             """Take a screenshot and exit."""
@@ -2351,7 +2515,11 @@ class App(Generic[ReturnType], DOMNode):
                 try:
                     try:
                         if isinstance(renderable, CompositorUpdate):
+                            cursor_x, cursor_y = self.cursor_position
                             terminal_sequence = renderable.render_segments(console)
+                            terminal_sequence += Control.move_to(
+                                cursor_x, cursor_y
+                            ).segment.text
                         else:
                             segments = console.render(renderable)
                             terminal_sequence = console._render_buffer(segments)
@@ -2361,7 +2529,9 @@ class App(Generic[ReturnType], DOMNode):
                         self._driver.write(terminal_sequence)
                 finally:
                     self._end_update()
+
                 self._driver.flush()
+
         finally:
             self.post_display_hook()
 
@@ -2876,10 +3046,14 @@ class App(Generic[ReturnType], DOMNode):
     def _refresh_notifications(self) -> None:
         """Refresh the notifications on the current screen, if one is available."""
         # If we've got a screen to hand...
-        if self.screen is not None:
+        try:
+            screen = self.screen
+        except ScreenStackError:
+            pass
+        else:
             try:
                 # ...see if it has a toast rack.
-                toast_rack = self.screen.get_child_by_type(ToastRack)
+                toast_rack = screen.get_child_by_type(ToastRack)
             except NoMatches:
                 # It doesn't. That's fine. Either there won't ever be one,
                 # or one will turn up. Things will work out later.
@@ -2894,17 +3068,19 @@ class App(Generic[ReturnType], DOMNode):
         title: str = "",
         severity: SeverityLevel = "information",
         timeout: float = Notification.timeout,
-    ) -> Notification:
+    ) -> None:
         """Create a notification.
+
+        !!! tip
+
+            This method is thread-safe.
+
 
         Args:
             message: The message for the notification.
             title: The title for the notification.
             severity: The severity of the notification.
             timeout: The timeout for the notification.
-
-        Returns:
-            The new notification.
 
         The `notify` method is used to create an application-wide
         notification, shown in a [`Toast`][textual.widgets._toast.Toast],
@@ -2940,11 +3116,14 @@ class App(Generic[ReturnType], DOMNode):
             ```
         """
         notification = Notification(message, title, severity, timeout)
-        self._notifications.add(notification)
-        self._refresh_notifications()
-        return notification
+        self.post_message(Notify(notification))
 
-    def unnotify(self, notification: Notification, refresh: bool = True) -> None:
+    def _on_notify(self, event: Notify) -> None:
+        """Handle notification message."""
+        self._notifications.add(event.notification)
+        self._refresh_notifications()
+
+    def _unnotify(self, notification: Notification, refresh: bool = True) -> None:
         """Remove a notification from the notification collection.
 
         Args:
@@ -2959,3 +3138,8 @@ class App(Generic[ReturnType], DOMNode):
         """Clear all the current notifications."""
         self._notifications.clear()
         self._refresh_notifications()
+
+    def action_command_palette(self) -> None:
+        """Show the Textual command palette."""
+        if self.use_command_palette and not CommandPalette.is_open(self):
+            self.push_screen(CommandPalette(), callback=self.call_next)
