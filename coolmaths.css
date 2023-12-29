@@ -1,0 +1,51 @@
+Screen {
+    overflow: hidden;
+}
+
+#question {
+    layout: grid;
+    grid-size: 4;
+    height: 100%;
+}
+
+#numbers {
+    column-span: 4;
+    padding: 0 1;
+    height: 100%;
+    background: $primary-lighten-2;
+    color: $text;
+    content-align: center middle;
+    text-align: center;
+}
+
+Button {
+    column-span: 4;
+    width: 100%;
+    height: 100%;
+}
+
+.filler {
+    column-span: 1;
+    height: 100%;
+    width: 100%;
+}
+
+#userinput {
+    column-span: 2;
+    padding: 0 1;
+    height: 100%;
+    width: 100%;
+    content-align: center middle;
+    text-align: center;
+    text-style: bold;
+    border: none;
+}
+
+#feedback {
+    column-span: 4;
+    padding: 2;
+    height: 100%;
+    width: 100%;
+    content-align: center middle;
+    text-align: center;
+}
