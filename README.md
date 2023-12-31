@@ -12,3 +12,9 @@ https://go.learntosolveit.com/coolmaths
 ---- 
 
 The logo for this project was designed by *Harini Vardhan*.
+
+### Screenshots
+
+![](https://github.com/orsenthil/coolmaths/blob/main/logos/screnshot1.png)
+![](https://github.com/orsenthil/coolmaths/blob/main/logos/screenshot2.png)
+![](https://github.com/orsenthil/coolmaths/blob/main/logos/screenshot3.png)
