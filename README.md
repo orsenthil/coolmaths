@@ -1,7 +1,6 @@
 # COOL MATHS
 
-
-Cool Maths is a game to practice basic maths. 
+Fun App to play elementary Maths Quiz.
 
 It should be simple and intuitive. 
 Play along and maximize your score!
